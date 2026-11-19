@@ -1,0 +1,16 @@
+name: Build Cef.so Linux x86
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Compile open.mp Linux 32-bit
+    uses: ./.github/workflows/build-server-reusable.yml
+    with:
+      target: ServerOmp
+      arch: x86
+      build-type: Release
