@@ -1,4 +1,4 @@
-name: Build & Publish
+name: Build Cef.so Linux
 
 on:
   push:
@@ -9,48 +9,48 @@ on:
 
 permissions:
   contents: read
-  packages: write
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
-    name: Build cef.so (linux x64, vcpkg)
+    name: Compile Cef.so (Linux x64)
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Download source code
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build g++ pkg-config curl zip unzip tar
+            cmake ninja-build g++ pkg-config curl zip unzip tar jq
 
       - name: Bootstrap vcpkg
         run: |
           set -e
           VCPKG_DIR="$GITHUB_WORKSPACE/vcpkg"
           BASELINE=$(jq -r '."builtin-baseline"' vcpkg.json)
+
           git clone https://github.com/microsoft/vcpkg.git "$VCPKG_DIR"
           git -C "$VCPKG_DIR" checkout "$BASELINE"
+
           "$VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics
+
           echo "VCPKG_ROOT=$VCPKG_DIR" >> "$GITHUB_ENV"
 
-      - name: Cache vcpkg installed packages
+      - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:
           path: |
             ${{ github.workspace }}/vcpkg/installed
             ~/.cache/vcpkg/archives
-          key:  vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
-      - name: Configure
+      - name: Configure CMake
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -59,50 +59,33 @@ jobs:
             -DVCPKG_MANIFEST_FEATURES=server \
             -DBUILD_SERVER_OMP=ON
 
-      - name: Build
-        run: cmake --build build --config RelWithDebInfo
-
-      - name: Stage artifact
+      - name: Compile Cef.so
         run: |
+          cmake --build build --config RelWithDebInfo --parallel 2
+
+      - name: Find and prepare shared library
+        run: |
+          set -e
+
           mkdir -p artifact-stage
-          # Component output location varies — search the build tree for any .so under server/.
-          find build -path '*/server/*' -name '*.so' -exec cp {} artifact-stage/ \;
-          ls -la artifact-stage/
-          test -n "$(ls -A artifact-stage/)" || (echo "::error::no .so produced under build/**/server/"; exit 1)
 
-      - name: Generate artifact Dockerfile
-        run: |
-          cat > artifact-stage/Dockerfile <<'EOF'
-          FROM scratch
-          COPY *.so /
-          EOF
+          find build -type f -name '*.so' -print
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          find build -type f -name '*.so' \
+            -exec cp {} artifact-stage/ \;
 
-      - name: Compute image tags
-        id: meta
-        uses: docker/metadata-action@v5
+          echo "Generated files:"
+          ls -lah artifact-stage/
+
+          if [ -z "$(find artifact-stage -maxdepth 1 -name '*.so' -print -quit)" ]; then
+            echo "::error::No .so file was generated."
+            exit 1
+          fi
+
+      - name: Upload Cef.so
+        uses: actions/upload-artifact@v4
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Login to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build & push artifact image
-        uses: docker/build-push-action@v5
-        with:
-          context: artifact-stage
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          name: Cef-so-Linux-x64
+          path: artifact-stage/*.so
+          if-no-files-found: error
+          retention-days: 7
