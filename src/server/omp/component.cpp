@@ -50,13 +50,13 @@ StringView CefOmpComponent::componentName() const
 
 SemanticVersion CefOmpComponent::componentVersion() const
 {
-	return { VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH, VERSION_BUILD };
+    return { VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH, VERSION_BUILD };
 }
 
 void CefOmpComponent::onLoad(ICore* core)
 {
     core_ = core;
-	core_->getEventDispatcher().addEventHandler(this);
+    core_->getEventDispatcher().addEventHandler(this);
     core_->getPlayers().getPlayerConnectDispatcher().addEventHandler(this);
     setAmxLookups(core_);
 }
@@ -69,7 +69,7 @@ void CefOmpComponent::onInit(IComponentList* components)
     if (pawn_)
     {
         setAmxFunctions(pawn_->getAmxFunctions());
-		setAmxLookups(components);
+        setAmxLookups(components);
         pawn_->getEventDispatcher().addEventHandler(this);
     }
 
@@ -91,68 +91,107 @@ void CefOmpComponent::onFree(IComponent* component)
 {
     if (component == pawn_)
     {
-		if (plugin_)
-		{
-			plugin_->InvalidatePawnBridge();
-		}
+        if (plugin_)
+        {
+            plugin_->InvalidatePawnBridge();
+        }
         pawn_ = nullptr;
     }
 }
 
-void CefOmpComponent::provideConfiguration(ILogger& logger, IEarlyConfig& config, bool defaults) 
+void CefOmpComponent::provideConfiguration(ILogger& logger, IEarlyConfig& config, bool defaults)
 {
     int* port_ptr = config.getInt("network.port");
-    const int port_value = (port_ptr && *port_ptr > 0 && *port_ptr <= 65535) ? *port_ptr : 7777;
-    
-    server_port_ = static_cast<uint16_t>(port_value);
-    cef_network_port_ = static_cast<uint16_t>(port_value + 2);
+    const int port_value = (port_ptr && *port_ptr > 0 && *port_ptr <= 65535)
+        ? *port_ptr
+        : 7777;
 
-	if (defaults) {
-		config.setBool("cef.debug", false);
-		config.setString("cef.master_resource_key", "ThisIsA16ByteKey");
+    server_port_ = static_cast<uint16_t>(port_value);
+
+    const int default_cef_port = (port_value <= 65533)
+        ? port_value + 2
+        : 7777;
+
+    if (defaults)
+    {
+        config.setInt("cef.network_port", default_cef_port);
+        config.setBool("cef.debug", false);
+        config.setString("cef.master_resource_key", "ThisIsA16ByteKey");
         config.setString("cef.resources_loader_mode", "cef");
         config.setInt("cef.resources_loader_dialog_id", ResourceDownloadDialogManager::DefaultDialogId);
-	}
-	else {
-		if (config.getType("cef.debug") == ConfigOptionType_None) {
-			config.setBool("cef.debug", false);
-		}
+    }
+    else
+    {
+        if (config.getType("cef.network_port") == ConfigOptionType_None)
+        {
+            config.setInt("cef.network_port", default_cef_port);
+        }
 
-		if (config.getType("cef.master_resource_key") == ConfigOptionType_None) {
-			config.setString("cef.master_resource_key", "ThisIsA16ByteKey");
-		}
+        if (config.getType("cef.debug") == ConfigOptionType_None)
+        {
+            config.setBool("cef.debug", false);
+        }
+
+        if (config.getType("cef.master_resource_key") == ConfigOptionType_None)
+        {
+            config.setString("cef.master_resource_key", "ThisIsA16ByteKey");
+        }
 
         if (config.getType("cef.resources_loader_mode") == ConfigOptionType_None &&
-            config.getType("cef.resources_loader_ui") == ConfigOptionType_None) {
+            config.getType("cef.resources_loader_ui") == ConfigOptionType_None)
+        {
             config.setString("cef.resources_loader_mode", "cef");
         }
 
-        if (config.getType("cef.resources_loader_dialog_id") == ConfigOptionType_None) {
+        if (config.getType("cef.resources_loader_dialog_id") == ConfigOptionType_None)
+        {
             config.setInt("cef.resources_loader_dialog_id", ResourceDownloadDialogManager::DefaultDialogId);
         }
-	}
+    }
 
-	debug_enabled_ = config.getBool("cef.debug") ? *config.getBool("cef.debug") : false;
+    int* cef_port_ptr = config.getInt("cef.network_port");
 
-	StringView key_sv = config.getString("cef.master_resource_key");
-	size_t key_len = key_sv.length();
+    const int cef_port_value = (cef_port_ptr && *cef_port_ptr > 0 && *cef_port_ptr <= 65535)
+        ? *cef_port_ptr
+        : default_cef_port;
 
-	if (key_len == 16 || key_len == 24 || key_len == 32) {
-		master_resource_key_.assign(key_sv.data(), key_sv.data() + key_len);
-		logger.printLn("[CEF Security] Master resource key loaded successfully (%zu bytes, for AES-%zu).", key_len, key_len * 8);
-	}
-	else {
-		logger.printLn("===================================================================");
-		logger.printLn("[CEF SECURITY ERROR] The 'cef.master_resource_key' is INVALID!");
-		logger.printLn("[CEF SECURITY ERROR] Its length is %zu bytes, but it MUST be 16, 24, or 32 bytes.", key_len);
-		logger.printLn("[CEF SECURITY ERROR] Resource encryption will fail. Please fix your configuration.");
-		logger.printLn("===================================================================");
-	}
+    cef_network_port_ = static_cast<uint16_t>(cef_port_value);
+
+    logger.printLn(
+        "[CEF] UDP network port configured: %d (game port: %d).",
+        cef_port_value,
+        port_value);
+
+    debug_enabled_ = config.getBool("cef.debug")
+        ? *config.getBool("cef.debug")
+        : false;
+
+    StringView key_sv = config.getString("cef.master_resource_key");
+    size_t key_len = key_sv.length();
+
+    if (key_len == 16 || key_len == 24 || key_len == 32)
+    {
+        master_resource_key_.assign(key_sv.data(), key_sv.data() + key_len);
+        logger.printLn(
+            "[CEF Security] Master resource key loaded successfully (%zu bytes, for AES-%zu).",
+            key_len,
+            key_len * 8);
+    }
+    else
+    {
+        logger.printLn("===================================================================");
+        logger.printLn("[CEF SECURITY ERROR] The 'cef.master_resource_key' is INVALID!");
+        logger.printLn("[CEF SECURITY ERROR] Its length is %zu bytes, but it MUST be 16, 24, or 32 bytes.", key_len);
+        logger.printLn("[CEF SECURITY ERROR] Resource encryption will fail. Please fix your configuration.");
+        logger.printLn("===================================================================");
+    }
 
     resource_loader_ui_mode_ = ReadResourceLoaderMode(config, logger);
 
     int* dialog_id = config.getInt("cef.resources_loader_dialog_id");
-    resource_download_dialog_id_ = dialog_id ? *dialog_id : ResourceDownloadDialogManager::DefaultDialogId;
+    resource_download_dialog_id_ = dialog_id
+        ? *dialog_id
+        : ResourceDownloadDialogManager::DefaultDialogId;
 }
 
 void CefOmpComponent::free()
@@ -171,14 +210,13 @@ IExtension* CefOmpComponent::getExtension(UID id)
     return nullptr;
 }
 
-void CefOmpComponent::onAmxLoad(IPawnScript& script) 
+void CefOmpComponent::onAmxLoad(IPawnScript& script)
 {
     pawn_natives::AmxLoad(script.GetAMX());
 }
 
-void CefOmpComponent::onAmxUnload(IPawnScript& script) 
+void CefOmpComponent::onAmxUnload(IPawnScript& script)
 {
-
 }
 
 void CefOmpComponent::onTick(Microseconds elapsed, TimePoint now)
@@ -202,9 +240,9 @@ void CefOmpComponent::onPlayerClientInit(IPlayer& player)
     plugin_->OnPlayerClientInit(player.getID());
 }
 
-void CefOmpComponent::onPlayerDisconnect(IPlayer& player, PeerDisconnectReason reason) 
+void CefOmpComponent::onPlayerDisconnect(IPlayer& player, PeerDisconnectReason reason)
 {
-	plugin_->OnPlayerDisconnect(player.getID());
+    plugin_->OnPlayerDisconnect(player.getID());
 }
 
 CefOmpComponent::~CefOmpComponent()
@@ -216,7 +254,7 @@ CefOmpComponent::~CefOmpComponent()
 
     if (core_)
     {
-		core_->getEventDispatcher().removeEventHandler(this);
+        core_->getEventDispatcher().removeEventHandler(this);
         core_->getPlayers().getPlayerConnectDispatcher().removeEventHandler(this);
     }
 }
